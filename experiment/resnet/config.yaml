@@ -1,0 +1,15 @@
+data:
+  data_path: ./data
+  valid_blocks: 16
+
+train:
+  lr: 0.0001
+  lr_milestone: [ 15, 30 ]
+  epoch: 50
+  image_size: 1024
+  bs: 4
+  num_workers: 3
+  show_interval: 10
+  test_interval: 1
+  snapshot_interval: 2
+  load_epoch: -1

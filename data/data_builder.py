@@ -1,5 +1,6 @@
 import torch
 from torch.utils.data import Dataset, DataLoader
+from torchvision.transforms import transforms
 import os
 import csv
 import random
@@ -16,6 +17,7 @@ class PANDA_dataset(Dataset):
         self.data = []
         self.valid_num = valid_num
         self.valid_blocks = valid_blocks
+        self.transform = transforms.ToTensor()
         if train == "train" or train == "valid":
             with open(os.path.join(path, "train.csv")) as f:
                 csv_f = csv.reader(f)
@@ -24,8 +26,8 @@ class PANDA_dataset(Dataset):
                         self.data.append([row[0], row[1], int(row[2]), row[3]])
             if not self.data_check():
                 assert 0
-            random.seed(17373331)
-            random.shuffle(self.data)
+            # random.seed(17373331)
+            # random.shuffle(self.data)
             self.data = self.data[:valid_num] if train == "valid" else self.data[valid_num:]
         else:
             assert 0
@@ -54,7 +56,7 @@ class PANDA_dataset(Dataset):
         img = img.reshape(8, 256, 8, 256, 3).transpose(0, 2, 1, 3, 4).reshape(-1, 256, 256, 3)
         idx = []
         for i in range(img.shape[0]):
-            if (img[i] < 240).sum() / 256 / 256 > 0.5:
+            if (img[i] < 240).sum() / 256 / 256 > 1.:
                 idx.append(i)
         if len(idx) < self.valid_blocks:
             for i in range(img.shape[0]):
@@ -64,17 +66,22 @@ class PANDA_dataset(Dataset):
                         break
         random.shuffle(idx)
         img = img[idx[:self.valid_blocks]]
+        img = img.reshape(1024, 1024, -1)
+        img = self.transform(img)
         return img, x[2]
 
 
 def build_data(path: str, batch_size, train: str, num_worker, valid_num=200, valid_block=32):
-    return DataLoader(PANDA_dataset(path, train, valid_block, valid_num, valid_block), batch_size, shuffle=True,
+    return DataLoader(PANDA_dataset(path, train, valid_num, valid_block), batch_size, shuffle=True,
                       num_workers=num_worker)
 
 
 if __name__ == "__main__":
     d = PANDA_dataset("./", "train", 200, 16)
-    x = d.__getitem__(4)[0]
+    x = d.__getitem__(4)
+    print(x[1])
+    x = x[0]
+    print(x.shape)
     x = x.reshape(4, 4, 256, 256, 3).transpose(0, 2, 1, 3, 4).reshape(1024, 1024, 3)
     print(x.shape)
     cv2.imwrite("test.png", x)

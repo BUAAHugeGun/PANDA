@@ -1,2 +1,4 @@
 .idea
 *.png
+experiment
+__pycache__
