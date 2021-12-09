@@ -23,6 +23,7 @@ torch.manual_seed(RANDOM_SEED)
 torch.cuda.manual_seed_all(RANDOM_SEED)
 torch.backends.cudnn.deterministic = True
 
+
 def to_log(s, output=True, end="\n"):
     global log_file
     if output:
@@ -68,8 +69,8 @@ def train(args, root):
 
     args_data = args['data']
     args_train = args['train']
-    dataloader = build_data(args_data['data_path'], args_train["bs"], "train",
-                            num_worker=args_train["num_workers"], valid_block=args_data['valid_blocks'])
+    dataloader = build_data(args_data['data_path'], args_train["bs"], "train", num_worker=args_train["num_workers"],
+                            valid_block=args_data['valid_blocks'], IMAGE_DIR=args_data['image_dir'])
     val_dataloader = build_data(args_data['data_path'], args_train["bs"], "valid",
                                 num_worker=1, valid_block=args_data['valid_blocks'])
     model = Resnet18(N=args_data['valid_blocks']).cuda()

@@ -1,9 +1,10 @@
 data:
   data_path: ./data
+  image_dir: image_small
   valid_blocks: 25
 
 train:
-  lr: 0.0001
+  lr: 0.0004
   lr_milestone: [ 15, 30 ]
   epoch: 50
   image_size: 256
