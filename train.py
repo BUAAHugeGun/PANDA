@@ -1,6 +1,6 @@
 from data.data_builder import build_data
 from torchvision.utils import save_image
-from tensorboardX import SummaryWriter
+from torch.utils.tensorboard import SummaryWriter
 import torch.nn as nn
 from torch import autograd
 from tqdm import tqdm
@@ -11,8 +11,17 @@ import numpy as np
 import yaml
 import os
 import argparse
-from nets.base import Base_net
+from nets.base import Resnet18
+import pathlib
+import random
+from sklearn.metrics import cohen_kappa_score
 
+RANDOM_SEED = 1337
+random.seed(RANDOM_SEED)
+np.random.seed(RANDOM_SEED)
+torch.manual_seed(RANDOM_SEED)
+torch.cuda.manual_seed_all(RANDOM_SEED)
+torch.backends.cudnn.deterministic = True
 
 def to_log(s, output=True, end="\n"):
     global log_file
@@ -51,33 +60,33 @@ def load(models, epoch, root):
 
 def train(args, root):
     global log_file
-    if not os.path.exists(os.path.join(root, "logs")):
-        os.mkdir(os.path.join(root, "logs"))
-    if not os.path.exists(os.path.join(root, "logs/result/")):
-        os.mkdir(os.path.join(root, "logs/result/"))
-    if not os.path.exists(os.path.join(root, "logs/result/event")):
-        os.mkdir(os.path.join(root, "logs/result/event"))
+    pathlib.Path(os.path.join(root, 'logs/ckpts/')).mkdir(parents=True, exist_ok=True)
+    pathlib.Path(os.path.join(root, 'logs/event/')).mkdir(parents=True, exist_ok=True)
     log_file = open(os.path.join(root, "logs/log.txt"), "w")
     to_log(args)
-    writer = SummaryWriter(os.path.join(root, "logs/result/event/"))
+    writer = SummaryWriter(os.path.join(root, "logs/event/"))
 
     args_data = args['data']
     args_train = args['train']
     dataloader = build_data(args_data['data_path'], args_train["bs"], "train",
                             num_worker=args_train["num_workers"], valid_block=args_data['valid_blocks'])
-    model = Base_net(image_size=args_train['image_size']).cuda()
+    val_dataloader = build_data(args_data['data_path'], args_train["bs"], "valid",
+                                num_worker=1, valid_block=args_data['valid_blocks'])
+    model = Resnet18(N=args_data['valid_blocks']).cuda()
     opt = torch.optim.Adam(model.parameters(), lr=args_train["lr"])
-    sch = torch.optim.lr_scheduler.MultiStepLR(opt, args_train["lr_milestone"], gamma=0.5)
+    sch = torch.optim.lr_scheduler.MultiStepLR(opt, args_train["lr_milestone"], gamma=0.3)
 
     load_epoch = load({"model": model, "opt": opt, "sch": sch}, args_train["load_epoch"], root)
     tot_iter = (load_epoch + 1) * len(dataloader)
+    show_interval = args_train['show_interval']
 
-    opt.step()
     criterion = nn.CrossEntropyLoss()
     accs = []
+    qwks = []
     for epoch in range(load_epoch + 1, args_train['epoch']):
-        sch.step()
+        model.train()
         for i, (image, label) in enumerate(dataloader):
+            opt.zero_grad()
             tot_iter += 1
             image = image.cuda()
             label = label.cuda()
@@ -85,39 +94,53 @@ def train(args, root):
             losses = criterion(fake, label)
             losses.backward()
             opt.step()
-            acc = torch.eq(torch.max(fake, dim=1)[1], label)
-            acc = acc.sum().cpu().float() / label.shape[0]
+
+            fake = fake.argmax(dim=1)
+            acc = (fake == label).float().sum().item() / label.shape[0]
             accs.append(acc)
+            qwk = cohen_kappa_score(fake.detach().cpu(), label.detach().cpu(), weights='quadratic')
+            qwks.append(qwk)
             if tot_iter % args_train['show_interval'] == 0:
                 to_log(
-                    'epoch: {}, batch: {}, lr: {}, acc: {}'.format(
-                        epoch, i, sch.get_last_lr()[0], sum(accs[-100:]) / 100.), end=' ')
-                to_log("loss: {}".format(losses.item()))
-            writer.add_scalar('train/loss', losses, tot_iter)
-            writer.add_scalar('train/acc', sum(accs[-100:]) / 100., tot_iter)
-            writer.add_scalar("lr", sch.get_last_lr()[0], tot_iter)
+                    'epoch: {}, batch: {}, lr: {}, acc: {:.4f},'.format(
+                        epoch, i, sch.get_last_lr()[0], sum(accs[-show_interval:]) / show_interval), end=' ')
+                to_log("qwk:{:.3f}, loss: {:.4f}".format(sum(qwks[-show_interval:]) / show_interval, losses.item()))
+                writer.add_scalar('train/loss', losses.item(), tot_iter)
+                writer.add_scalar('train/acc', sum(accs[-show_interval:]) / show_interval, tot_iter)
+                writer.add_scalar('train/qwk', sum(qwks[-show_interval:]) / show_interval, tot_iter)
+                writer.add_scalar("lr", sch.get_last_lr()[0], tot_iter)
+        sch.step()
 
-        if epoch % args_train["snapshot_interval"] == 0:
-            torch.save(model.state_dict(), os.path.join(root, "logs/model_epoch-{}.pth".format(epoch)))
-            torch.save(opt.state_dict(), os.path.join(root, "logs/opt_epoch-{}.pth".format(epoch)))
-            torch.save(sch.state_dict(), os.path.join(root, "logs/sch_epoch-{}.pth".format(epoch)))
-        # if epoch % args_train['test_interval'] == 0:
-        #     # label = torch.tensor([5]).expand([64]).cuda()
-        #     # input_test[:, 1, :, :] = label.reshape(64, 1, 1).expand(64, image_size, image_size)
-        #     # G_out = G(input_test)
-        #     image = y.clone().detach()
-        #     image = batch_image_merge(image)
-        #     image = imagetensor2np(image)
-        #     y = y / 2 + 0.5
-        #     y = y.clamp(0, 1)
-        #     save_image(y, os.path.join(root, "logs/reconstruction-{}.png".format(epoch)))
-        #     writer.add_image('image{}/fake'.format(epoch), cv2.cvtColor(image, cv2.COLOR_BGR2RGB), tot_iter,
-        #                      dataformats='HWC')
+        if epoch % args_train["snapshot_interval"] == 0 or epoch == args_train['epoch'] - 1:
+            torch.save(model.state_dict(), os.path.join(root, "logs/ckpts/model_epoch-{}.pth".format(epoch)))
+            torch.save(opt.state_dict(), os.path.join(root, "logs/ckpts/opt_epoch-{}.pth".format(epoch)))
+            torch.save(sch.state_dict(), os.path.join(root, "logs/ckpts/sch_epoch-{}.pth".format(epoch)))
+
+        if epoch % args_train['test_interval'] == 0:
+            preds, labels = [], []
+            model.eval()
+            with torch.no_grad():
+                for (image, label) in val_dataloader:
+                    image = image.cuda()
+                    label = label.cuda()
+                    fake = model(image)
+                    preds.append(fake)
+                    labels.append(label)
+                preds = torch.cat(preds, dim=0)
+                labels = torch.cat(labels, dim=0)
+
+                loss = criterion(preds, labels).item()
+                preds = preds.argmax(dim=1)
+                acc = (preds == labels).float().mean().item()
+                qwk = cohen_kappa_score(preds.detach().cpu(), labels.detach().cpu(), weights='quadratic')
+                to_log('epoch: {}, [valid] acc: {:.4f}, qwk: {:.3f}, loss: {:.4f}'.format(epoch, acc, qwk, loss))
+                writer.add_scalar('valid/loss', loss, epoch)
+                writer.add_scalar('valid/acc', acc, epoch)
+                writer.add_scalar('valid/qwk', qwk, epoch)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=str)
-    parser.add_argument("--test", default=False, action='store_true')
     args = parser.parse_args()
     train(open_config(args.root), args.root)

@@ -1,12 +1,12 @@
 data:
   data_path: ./data
-  valid_blocks: 16
+  valid_blocks: 25
 
 train:
   lr: 0.0001
   lr_milestone: [ 15, 30 ]
   epoch: 50
-  image_size: 1024
+  image_size: 256
   bs: 4
   num_workers: 3
   show_interval: 10

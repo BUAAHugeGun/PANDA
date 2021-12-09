@@ -1,4 +1,6 @@
 .idea
+.vscode
 *.png
 experiment
 __pycache__
+data/image_*
