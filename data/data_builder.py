@@ -26,7 +26,7 @@ class PANDA_dataset(Dataset):
         ])
         if split == "train" or split == "valid":
             csv_name = "train.csv" if IMAGE_DIR == "image" else "train_small.csv"
-            with open(os.path.join(path, "train_small.csv"), 'r') as f:
+            with open(os.path.join(path, csv_name), 'r') as f:
                 csv_f = csv.DictReader(f)
                 for row in csv_f:
                     self.data.append(
@@ -43,7 +43,6 @@ class PANDA_dataset(Dataset):
         for x in self.data:
             name = x[0]
             if not os.path.exists(os.path.join(self.path, self.IMAGE_DIR, name + ".png")):
-                print(os.path.join(self.path, self.IMAGE_DIR, name + ".png"))
                 missing.append(name)
         if len(missing):
             print("Missing images:", name)
