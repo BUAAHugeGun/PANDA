@@ -11,10 +11,11 @@ import numpy as np
 import yaml
 import os
 import argparse
-from nets.base import Resnet18
+from nets.base import Resnet18_asigm
 import pathlib
 import random
 from sklearn.metrics import cohen_kappa_score
+from tqdm import tqdm
 
 RANDOM_SEED = 1337
 random.seed(RANDOM_SEED)
@@ -51,7 +52,7 @@ def load(models, epoch, root):
     if epoch is None:
         return -1
     for name, model in models.items():
-        ckpt = torch.load(os.path.join(root, "logs/" + name + "_epoch-{}.pth".format(epoch)))
+        ckpt = torch.load(os.path.join(root, "logs/ckpts/" + name + "_epoch-{}.pth".format(epoch)))
         ckpt = {k: v for k, v in ckpt.items()}
         model.load_state_dict(ckpt)
         to_log("load model: {} from epoch: {}".format(name, epoch))
@@ -69,19 +70,20 @@ def train(args, root):
 
     args_data = args['data']
     args_train = args['train']
-    dataloader = build_data(args_data['data_path'], args_train["bs"], "train", num_worker=args_train["num_workers"],
-                            valid_block=args_data['valid_blocks'], IMAGE_DIR=args_data['image_dir'])
-    val_dataloader = build_data(args_data['data_path'], args_train["bs"], "valid",
-                                num_worker=1, valid_block=args_data['valid_blocks'], IMAGE_DIR=args_data['image_dir'])
-    model = Resnet18(N=args_data['valid_blocks']).cuda()
+    args_valid = args['valid']
+    dataloader = build_data(args_data['data_path'], args_train["bs"], "train",
+                            num_worker=args_train["num_workers"], valid_block=args_data['valid_blocks'])
+    val_dataloader = build_data(args_data['data_path'], args_valid["bs"], "valid",
+                                num_worker=args_valid["num_workers"], valid_block=args_data['valid_blocks'])
+    model = Resnet18_asigm(N=args_data['valid_blocks']).cuda()
     opt = torch.optim.Adam(model.parameters(), lr=args_train["lr"])
-    sch = torch.optim.lr_scheduler.MultiStepLR(opt, args_train["lr_milestone"], gamma=0.3)
+    sch = torch.optim.lr_scheduler.MultiStepLR(opt, args_train["lr_milestone"], gamma=0.5)
 
     load_epoch = load({"model": model, "opt": opt, "sch": sch}, args_train["load_epoch"], root)
     tot_iter = (load_epoch + 1) * len(dataloader)
     show_interval = args_train['show_interval']
 
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.MSELoss()
     accs = []
     qwks = []
     for epoch in range(load_epoch + 1, args_train['epoch']):
@@ -92,25 +94,24 @@ def train(args, root):
             image = image.cuda()
             label = label.cuda()
             fake = model(image)
-            losses = criterion(fake, label)
+            losses = criterion(fake, label.float())
             losses.backward()
             opt.step()
 
-            fake = fake.argmax(dim=1)
+            fake = fake.round().int()
             acc = (fake == label).float().sum().item() / label.shape[0]
             accs.append(acc)
             qwk = cohen_kappa_score(fake.detach().cpu(), label.detach().cpu(), weights='quadratic')
             qwks.append(qwk)
             if tot_iter % args_train['show_interval'] == 0:
                 to_log(
-                    'epoch: {}, batch: {}, lr: {}, acc: {:.4f},'.format(
+                    'epoch: {}, batch: {}, lr: {:.2e}, acc: {:.4f},'.format(
                         epoch, i, sch.get_last_lr()[0], sum(accs[-show_interval:]) / show_interval), end=' ')
                 to_log("qwk:{:.3f}, loss: {:.4f}".format(sum(qwks[-show_interval:]) / show_interval, losses.item()))
                 writer.add_scalar('train/loss', losses.item(), tot_iter)
                 writer.add_scalar('train/acc', sum(accs[-show_interval:]) / show_interval, tot_iter)
                 writer.add_scalar('train/qwk', sum(qwks[-show_interval:]) / show_interval, tot_iter)
                 writer.add_scalar("lr", sch.get_last_lr()[0], tot_iter)
-        sch.step()
 
         if epoch % args_train["snapshot_interval"] == 0 or epoch == args_train['epoch'] - 1:
             torch.save(model.state_dict(), os.path.join(root, "logs/ckpts/model_epoch-{}.pth".format(epoch)))
@@ -121,7 +122,7 @@ def train(args, root):
             preds, labels = [], []
             model.eval()
             with torch.no_grad():
-                for (image, label) in val_dataloader:
+                for (image, label) in tqdm(val_dataloader):
                     image = image.cuda()
                     label = label.cuda()
                     fake = model(image)
@@ -130,14 +131,17 @@ def train(args, root):
                 preds = torch.cat(preds, dim=0)
                 labels = torch.cat(labels, dim=0)
 
-                loss = criterion(preds, labels).item()
-                preds = preds.argmax(dim=1)
+                loss = criterion(preds, labels.float()).item()
+                preds = preds.round().int()
                 acc = (preds == labels).float().mean().item()
                 qwk = cohen_kappa_score(preds.detach().cpu(), labels.detach().cpu(), weights='quadratic')
                 to_log('epoch: {}, [valid] acc: {:.4f}, qwk: {:.3f}, loss: {:.4f}'.format(epoch, acc, qwk, loss))
                 writer.add_scalar('valid/loss', loss, epoch)
                 writer.add_scalar('valid/acc', acc, epoch)
                 writer.add_scalar('valid/qwk', qwk, epoch)
+        sch.step()
+        writer.flush()
+    writer.close()
 
 
 if __name__ == "__main__":
