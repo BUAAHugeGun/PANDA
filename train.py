@@ -71,10 +71,10 @@ def train(args, root):
     args_data = args['data']
     args_train = args['train']
     args_valid = args['valid']
-    dataloader = build_data(args_data['data_path'], args_train["bs"], "train",
-                            num_worker=args_train["num_workers"], valid_block=args_data['valid_blocks'])
-    val_dataloader = build_data(args_data['data_path'], args_valid["bs"], "valid",
-                                num_worker=args_valid["num_workers"], valid_block=args_data['valid_blocks'])
+    dataloader = build_data(args_data['data_path'], args_train["bs"], "train", num_worker=args_train["num_workers"],
+                            valid_block=args_data['valid_blocks'], IMAGE_DIR=args_train['image_dir'])
+    val_dataloader = build_data(args_data['data_path'], args_valid["bs"], "valid", num_worker=args_valid["num_workers"],
+                                valid_block=args_data['valid_blocks'], IMAGE_DIR=args_train['image_dir'])
     model = Resnet18_asigm(N=args_data['valid_blocks']).cuda()
     opt = torch.optim.Adam(model.parameters(), lr=args_train["lr"])
     sch = torch.optim.lr_scheduler.MultiStepLR(opt, args_train["lr_milestone"], gamma=0.5)
