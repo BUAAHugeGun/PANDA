@@ -170,6 +170,7 @@ def get_model_by_name(name, **kwargs):
         'res18': Resnet18,
         'res18_asigm': Resnet18_asigm,
         'res18_afix': Resnet18_afix,
+        'res34_afix': Resnet34_afix,
         'res50_afix': Resnet50_afix,
     }
     assert name in models
