@@ -2,18 +2,29 @@ data:
   data_path: ./data
   image_dir: image
   valid_blocks: 25
+  scale_factor: 1
 
 train:
-  lr: 0.0001
+  lr: 0.00005
   lr_milestone: [ 10, 25, 50 ]
   epoch: 100
-  image_size: 256
   bs: 8
-  num_workers: 4
+  num_workers: 0
   show_interval: 10
   test_interval: 1
   snapshot_interval: 10
   load_epoch: -1
+
+model:
+  name: res18_afix #res34, res50
+  args:
+    pretrain: True
+    N: 25
+    classes: 6
+
+lambda:
+  mse: 0.75
+  cross: 0.25
 
 valid:
   bs: 32

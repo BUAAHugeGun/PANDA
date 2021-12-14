@@ -11,7 +11,7 @@ import numpy as np
 import yaml
 import os
 import argparse
-from nets.base import Resnet18_asigm
+from nets.base import get_model_by_name
 import pathlib
 import random
 from sklearn.metrics import cohen_kappa_score
@@ -69,13 +69,15 @@ def train(args, root):
     writer = SummaryWriter(os.path.join(root, "logs/event/"))
 
     args_data = args['data']
+    args_model = args['model']
     args_train = args['train']
     args_valid = args['valid']
-    dataloader = build_data(args_data['data_path'], args_train["bs"], "train", num_worker=args_train["num_workers"],
-                            valid_block=args_data['valid_blocks'], IMAGE_DIR=args_train['image_dir'])
-    val_dataloader = build_data(args_data['data_path'], args_valid["bs"], "valid", num_worker=args_valid["num_workers"],
-                                valid_block=args_data['valid_blocks'], IMAGE_DIR=args_train['image_dir'])
-    model = Resnet18_asigm(N=args_data['valid_blocks']).cuda()
+    args_labmda = args['lambda']
+
+    dataloader = build_data(args_train["bs"], args_train["num_workers"], **args_data, split="train")
+    val_dataloader = build_data(args_valid["bs"], args_valid["num_workers"], **args_data, split="valid")
+
+    model = get_model_by_name(args_model['name'], **args_model['args']).cuda()
     opt = torch.optim.Adam(model.parameters(), lr=args_train["lr"])
     sch = torch.optim.lr_scheduler.MultiStepLR(opt, args_train["lr_milestone"], gamma=0.5)
 
@@ -83,7 +85,8 @@ def train(args, root):
     tot_iter = (load_epoch + 1) * len(dataloader)
     show_interval = args_train['show_interval']
 
-    criterion = nn.MSELoss()
+    MSE = nn.MSELoss()
+    NLL = nn.NLLLoss()
     accs = []
     qwks = []
     for epoch in range(load_epoch + 1, args_train['epoch']):
@@ -93,8 +96,10 @@ def train(args, root):
             tot_iter += 1
             image = image.cuda()
             label = label.cuda()
-            fake = model(image)
-            losses = criterion(fake, label.float())
+            fake, fake_softmax = model(image)
+            loss_mse = MSE(fake, label.float())
+            loss_cross = NLL(fake_softmax.log(), label)
+            losses = loss_mse * args_labmda['mse'] + loss_cross * args_labmda["cross"]
             losses.backward()
             opt.step()
 
@@ -128,15 +133,17 @@ def train(args, root):
                     fake = model(image)
                     preds.append(fake)
                     labels.append(label)
+                    loss_mse = MSE(fake, label.float())
+                    loss_cross = NLL(fake_softmax.log(), label)
+                    losses = loss_mse * args_labmda['mse'] + loss_cross * args_labmda["cross"]
                 preds = torch.cat(preds, dim=0)
                 labels = torch.cat(labels, dim=0)
 
-                loss = criterion(preds, labels.float()).item()
                 preds = preds.round().int()
                 acc = (preds == labels).float().mean().item()
                 qwk = cohen_kappa_score(preds.detach().cpu(), labels.detach().cpu(), weights='quadratic')
-                to_log('epoch: {}, [valid] acc: {:.4f}, qwk: {:.3f}, loss: {:.4f}'.format(epoch, acc, qwk, loss))
-                writer.add_scalar('valid/loss', loss, epoch)
+                to_log('epoch: {}, [valid] acc: {:.4f}, qwk: {:.3f}, loss: {:.4f}'.format(epoch, acc, qwk, losses))
+                writer.add_scalar('valid/loss', losses, epoch)
                 writer.add_scalar('valid/acc', acc, epoch)
                 writer.add_scalar('valid/qwk', qwk, epoch)
         sch.step()
