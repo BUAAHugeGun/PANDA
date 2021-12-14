@@ -107,6 +107,35 @@ class Resnet18_afix(nn.Module):
         return pred_label, pred_softmax
 
 
+class Resnet34_afix(nn.Module):
+    def __init__(self, pretrain=True, classes=6, N=25):
+        super(Resnet34_afix, self).__init__()
+        print("Using Network = resnet18 + fixed a, pretrain={}, N={}".format(pretrain, N))
+        self.N = N
+        self.classes = classes
+
+        model = torchvision.models.resnet34(pretrained=pretrain)
+        self.encoder = nn.Sequential(*list(model.children())[:-2])
+        feat_channel = list(model.children())[-1].in_features
+
+        self.gap = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Flatten(),
+        )
+        self.penultimate = nn.Sequential(
+            nn.Linear(feat_channel, classes),
+            nn.Softmax(dim=1),
+        )
+        self.register_buffer('a', torch.arange(classes))
+
+    def forward(self, x):
+        f = self.encoder(widthN_to_bsN(x, self.N))
+        f = self.gap(bsN_to_widthN(f, self.N))
+        pred_softmax = self.penultimate(f)
+        pred_label = (pred_softmax * self.a).sum(dim=1)
+        return pred_label, pred_softmax
+
+
 class Resnet50_afix(nn.Module):
     def __init__(self, pretrain=True, classes=6, N=25):
         super(Resnet50_afix, self).__init__()
